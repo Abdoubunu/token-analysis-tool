@@ -1,27 +1,18 @@
-require('dotenv').config(); // No path, Render uses env vars
+require('dotenv').config();
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { TwitterApi } = require('twitter-api-v2');
 const TelegramBot = require('node-telegram-bot-api');
 const natural = require('natural');
+const http = require('http');
 
 // Configuration
 const CONFIG = {
-  twitter: {
-    bearer_token: process.env.TWITTER_BEARER_TOKEN
-  },
-  telegram: {
-    token: process.env.TELEGRAM_BOT_TOKEN,
-    chatId: process.env.TELEGRAM_CHAT_ID
-  },
+  twitter: { bearer_token: process.env.TWITTER_BEARER_TOKEN },
+  telegram: { token: process.env.TELEGRAM_BOT_TOKEN, chatId: process.env.TELEGRAM_CHAT_ID },
   dexScreenerApi: 'https://api.dexscreener.com/latest/dex/tokens/',
   listingAccount: 'MEXC_Listings',
-  filters: {
-    minLiquidity: 100000,
-    minVolume: 1000000,
-    minFDV: 2000000,
-    minMentions: 50 // Kept this as a basic engagement metric
-  }
+  filters: { minLiquidity: 100000, minVolume: 1000000, minFDV: 2000000, minMentions: 50 }
 };
 
 // Validate Twitter config
@@ -32,18 +23,12 @@ if (!CONFIG.twitter.bearer_token) {
 // Initialize APIs
 const twitterClient = new TwitterApi(CONFIG.twitter.bearer_token);
 const telegramBot = new TelegramBot(CONFIG.telegram.token, { polling: false });
-
-// Axios with browser-like User-Agent
 const axiosInstance = axios.create({
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-  }
+  headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
 });
-
-// Store processed tokens
 const processedTokens = new Set();
 
-// Fetch new listings from X using v2
+// Fetch new listings from X
 async function fetchNewListings() {
   try {
     const response = await twitterClient.v2.search({
@@ -77,7 +62,6 @@ async function fetchNewListings() {
         });
       }
     }
-
     return listings;
   } catch (error) {
     if (error.code === 429) {
@@ -92,7 +76,7 @@ async function fetchNewListings() {
   }
 }
 
-// Basic fundamental analysis
+// Fetch fundamentals
 async function fetchFundamentals(listing) {
   try {
     const response = await axiosInstance.get(listing.link);
@@ -112,7 +96,6 @@ async function fetchTokenData(token) {
     const response = await axios.get(`${CONFIG.dexScreenerApi}${token}`);
     const pair = response.data.pairs?.[0];
     if (!pair) return null;
-
     return {
       price: pair.priceUsd,
       priceChange: pair.priceChange.h1,
@@ -129,7 +112,7 @@ async function fetchTokenData(token) {
   }
 }
 
-// Twitter analysis (Engagement and Sentiment only)
+// Analyze Twitter engagement and sentiment
 async function analyzeTwitter(token) {
   try {
     const response = await twitterClient.v2.search({
@@ -185,7 +168,7 @@ async function analyzeTwitter(token) {
   }
 }
 
-// Send Telegram alert with filters
+// Send Telegram alert
 async function sendAlert(listing, tokenData, twitterData, fundamentals) {
   if (!tokenData || !twitterData) return;
 
@@ -250,10 +233,15 @@ async function runTool() {
     const tokenData = await fetchTokenData(listing.token);
     const twitterData = await analyzeTwitter(listing.token);
     const fundamentals = await fetchFundamentals(listing);
-
     await sendAlert(listing, tokenData, twitterData, fundamentals);
   }
 }
+
+// Dummy HTTP server for Render
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot is alive');
+}).listen(process.env.PORT || 3000);
 
 // Run every 30 minutes
 setInterval(runTool, 30 * 60 * 1000);
