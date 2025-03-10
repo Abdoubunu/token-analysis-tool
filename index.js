@@ -15,14 +15,12 @@ const CONFIG = {
     chatId: process.env.TELEGRAM_CHAT_ID
   },
   dexScreenerApi: 'https://api.dexscreener.com/latest/dex/tokens/',
-  influencerThreshold: 5000,
   listingAccount: 'MEXC_Listings',
   filters: {
     minLiquidity: 100000,
     minVolume: 1000000,
     minFDV: 2000000,
-    minInfluencers: 2,
-    minMentions: 50
+    minMentions: 50 // Kept this as a basic engagement metric
   }
 };
 
@@ -131,26 +129,22 @@ async function fetchTokenData(token) {
   }
 }
 
-// Twitter analysis
+// Twitter analysis (Engagement and Sentiment only)
 async function analyzeTwitter(token) {
   try {
     const response = await twitterClient.v2.search({
       query: `${token} OR $${token} -is:retweet`,
       max_results: 100,
-      'tweet.fields': ['public_metrics', 'created_at'],
-      expansions: 'author_id',
-      'user.fields': ['public_metrics']
+      'tweet.fields': ['public_metrics', 'created_at']
     });
 
     const rateLimit = response.rateLimit;
     console.log(`Rate Limit Info (Analysis): ${rateLimit.remaining}/${rateLimit.limit}, Reset at ${new Date(rateLimit.reset * 1000)}`);
 
-    let influencers = 0;
     let totalLikes = 0;
     let totalRetweets = 0;
     const tweets = response.data.data || [];
     const mentionCount = tweets.length;
-    const users = response.data.includes?.users || [];
     const sentimentAnalyzer = new natural.SentimentAnalyzer('English', natural.PorterStemmer, 'afinn');
     let sentimentScore = 0;
     let tweetCountForSentiment = 0;
@@ -159,10 +153,6 @@ async function analyzeTwitter(token) {
       const { like_count, retweet_count } = tweet.public_metrics;
       totalLikes += like_count || 0;
       totalRetweets += retweet_count || 0;
-
-      const user = users.find(u => u.id === tweet.author_id);
-      const followers = user?.public_metrics?.followers_count || 0;
-      if (followers >= CONFIG.influencerThreshold) influencers++;
 
       const score = sentimentAnalyzer.getSentiment(tweet.text.split(' '));
       if (score !== 0) {
@@ -176,7 +166,6 @@ async function analyzeTwitter(token) {
       : 'Neutral';
 
     return {
-      influencers,
       mentionCount,
       likes: totalLikes,
       retweets: totalRetweets,
@@ -192,7 +181,7 @@ async function analyzeTwitter(token) {
       return await analyzeTwitter(token);
     }
     console.error(`Error analyzing Twitter for ${token}:`, error);
-    return { influencers: 0, mentionCount: 0, likes: 0, retweets: 0, sentiment: 'N/A', link: '' };
+    return { mentionCount: 0, likes: 0, retweets: 0, sentiment: 'N/A', link: '' };
   }
 }
 
@@ -204,7 +193,6 @@ async function sendAlert(listing, tokenData, twitterData, fundamentals) {
     tokenData.liquidity >= CONFIG.filters.minLiquidity &&
     tokenData.volume >= CONFIG.filters.minVolume &&
     tokenData.fdv >= CONFIG.filters.minFDV &&
-    twitterData.influencers >= CONFIG.filters.minInfluencers &&
     twitterData.mentionCount >= CONFIG.filters.minMentions &&
     twitterData.sentiment === 'Positive' &&
     fundamentals.team !== 'Not found' &&
@@ -229,7 +217,6 @@ FDV: $${tokenData.fdv}
 - Holders: ${tokenData.holders} (Manual Check)
 
 🐦 Twitter Analysis:
-- Influencers: ${twitterData.influencers} (≥${CONFIG.influencerThreshold} followers)
 - Mentions: ${twitterData.mentionCount}
 - Engagement: ${twitterData.likes} likes, ${twitterData.retweets} retweets
 - Sentiment: ${twitterData.sentiment}
